@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Edebiyat Sınav Kaydı</title>
+<style>
+:root{--bg:#A8E6CF;--card:#fff;--ink:#1B4332;--green:#2D6A4F;--soft:#F0F4F1;--line:#cfe0d6;--red:#B71C1C;--mute:#5b6b62;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10261c;--card:#18332a;--ink:#e3f4ea;--green:#52b788;--soft:#10261c;--line:#2d5244;--red:#e57373;--mute:#9fbcae}}
+:root[data-theme="dark"]{--bg:#10261c;--card:#18332a;--ink:#e3f4ea;--green:#52b788;--soft:#10261c;--line:#2d5244;--red:#e57373;--mute:#9fbcae}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+#app{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:1.35rem;margin:8px 0;text-align:center}h2{font-size:1.1rem;margin:0 0 8px}h3{font-size:.95rem;margin:14px 0 4px;color:var(--mute)}
+.card{background:var(--card);border-radius:14px;padding:16px;margin:12px 0}
+label{display:block;font-weight:700;margin:12px 0 4px}
+input,select,textarea{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--ink);font:inherit}
+textarea{min-height:130px;resize:vertical}
+button{font:inherit;font-weight:700;border:0;border-radius:12px;padding:14px;background:var(--green);color:var(--card);width:100%;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);width:auto;padding:8px 4px}
+button.stop{background:var(--red);color:#fff}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.sub{text-align:center;color:var(--mute);margin:0}
+.row{display:flex;gap:10px;align-items:flex-end}.row>*{flex:1}
+.tabs{display:flex;gap:6px;margin:10px 0}.tabs button{padding:8px;background:var(--soft);color:var(--ink);border:1px solid var(--line)}
+.tabs button.on{background:var(--green);color:var(--card)}
+.stu{display:block;text-align:left;background:var(--soft);color:var(--ink);border:1px solid var(--line);margin:6px 0}
+.exam{border-top:1px solid var(--line);padding:12px 0}.exam audio{width:100%;margin-top:8px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.puan{font-size:1.6rem;font-weight:800;color:var(--green)}
+.meta{color:var(--mute);font-size:.85rem}
+canvas{width:100%;height:60px;display:block}
+.note{font-size:.85rem;color:var(--mute);margin:6px 0 0}
+.rec{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--red);margin-right:6px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+var KEY="edebiyat_ogrenciler_v1",ANH="edebiyat_anahtar",app=document.getElementById("app");
+var og=yukle(),secili=null,kayit=null,filtre="Tümü",ara="",ogretmen="Aysu YILMAZ";
+function $(i){return document.getElementById(i)}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function duzey(s){return parseInt(s)<=8?"Ortaokul":"Lise"}
+function yukle(){
+  var v=null;try{v=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+  v=v||[{ad:"Burak Kaya",sinif:"11-A",sinavlar:[]},{ad:"Deniz Aktaş",sinif:"10-C",sinavlar:[]},{ad:"Dahra Ünker",sinif:"11-B",sinavlar:[]}];
+  v.forEach(function(o){o.sinavlar.forEach(function(s){s.ts=s.ts||parseInt(String(s.id).slice(1))||0})});
+  return v;
+}
+function sakla(){try{localStorage.setItem(KEY,JSON.stringify(og))}catch(e){}}
+function db(){return new Promise(function(res,rej){var r=indexedDB.open("ses",1);r.onupgradeneeded=function(){r.result.createObjectStore("k")};r.onsuccess=function(){res(r.result)};r.onerror=rej})}
+function dbPut(id,b){return db().then(function(d){d.transaction("k","readwrite").objectStore("k").put(b,id)}).catch(function(){})}
+function dbGet(id){return db().then(function(d){return new Promise(function(res){var q=d.transaction("k").objectStore("k").get(id);q.onsuccess=function(){res(q.result)};q.onerror=function(){res(null)}})}).catch(function(){return null})}
+
+/* ---- dolgu sesi (eee, ııı) dedektörü: kararlı, sürekli sesli bölüm >= 0.7 sn ---- */
+function Ded(){this.n=0;this.sn=0;this.d=0;this.o=0;this.f=0;this.k=0;this.say=0}
+Ded.prototype.push=function(rms,f0,dt){
+  var ok=rms>0.015&&f0>0&&(this.d===0||(Math.abs(f0/this.f-1)<0.08&&rms>this.o*0.6&&rms<this.o*1.6));
+  if(ok){if(this.d){this.f=this.f*0.9+f0*0.1;this.o=this.o*0.9+rms*0.1}else{this.f=f0;this.o=rms}this.k=0;this.d+=dt;if(this.d>=0.6&&!this.say){this.say=1;this.n++}}
+  else if(this.d>0&&this.k<3){this.k++}else this.bitir();
+};
+Ded.prototype.bitir=function(){if(this.d>=0.6)this.sn+=this.d;this.d=0;this.say=0;this.k=0};
+function ozellik(x,sr){var n=x.length,s=0,i;for(i=0;i<n;i++)s+=x[i]*x[i];var rms=Math.sqrt(s/n);if(rms<0.015)return[rms,0];var D=4,m=n/D,y=new Float32Array(m),r=sr/D,e=0,best=0,bl=0;for(i=0;i<m;i++){y[i]=(x[i*D]+x[i*D+1]+x[i*D+2]+x[i*D+3])/4;e+=y[i]*y[i]}var lo=Math.floor(r/400),hi=Math.floor(r/70);for(var l=lo;l<=hi&&l<m;l++){var c=0;for(i=0;i+l<m;i++)c+=y[i]*y[i+l];if(c>best){best=c;bl=l}}return[rms,(e>0&&bl&&best/e>0.5)?r/bl:0]}
+
+/* ---- puanlama ---- */
+function puanla(m){
+  var etkin=Math.max(m.gecen-m.dolguSn,0),dol=Math.min(etkin/m.plan,1);
+  var t=m.metin.toLocaleLowerCase("tr"),bul=m.anahtar.filter(function(k){return t.indexOf(k)>-1}),eks=m.anahtar.filter(function(k){return bul.indexOf(k)<0});
+  var wK=m.anahtar.length?40:0,wS=m.anahtar.length?40:70,wA=100-wK-wS;
+  var akici=Math.max(1-m.dolguSayi*0.1,0);
+  var p=wS*dol+(wK?wK*bul.length/m.anahtar.length:0)+wA*akici;
+  return{puan:Math.round(p),etkin:Math.round(etkin),doluluk:Math.round(dol*100),bul:bul,eks:eks};
+}
+
+/* ---- ekranlar ---- */
+function giris(){
+  app.innerHTML='<div class="card"><h1>Hesaba giriş</h1><label for="ad">Ad soyad</label><input id="ad" value="Aysu YILMAZ"><label for="sf">Şifre</label><input id="sf" type="password" value="123456"><div style="height:16px"></div><button id="gir">Giriş yap</button></div>';
+  $("gir").onclick=function(){ogretmen=$("ad").value||ogretmen;anaSayfa()};
+}
+function anaSayfa(){
+  app.innerHTML='<h1>Ana sayfa</h1><p class="sub"><b>'+esc(ogretmen)+'</b><br>Edebiyat öğretmeni</p><div style="height:12px"></div><button id="ekle">+ Öğrenci ekle</button>'+
+  '<div class="card"><input id="ara" type="search" placeholder="Öğrenci ara (ad veya sınıf)" aria-label="Öğrenci ara" value="'+esc(ara)+'"><div class="tabs" id="tabs"></div><div id="liste"></div></div>';
+  $("ekle").onclick=ogrenciEkle;
+  $("ara").oninput=function(){ara=this.value;listele()};
+  listele();
+}
+function listele(){
+  var t="";["Tümü","Ortaokul","Lise"].forEach(function(f){t+='<button data-f="'+f+'" class="'+(f===filtre?"on":"")+'">'+f+'</button>'});
+  $("tabs").innerHTML=t;
+  [].forEach.call($("tabs").children,function(b){b.onclick=function(){filtre=b.dataset.f;listele()}});
+  var q=ara.toLocaleLowerCase("tr").trim(),h="",say=0;
+  ["Ortaokul","Lise"].forEach(function(d){
+    if(filtre!=="Tümü"&&filtre!==d)return;
+    var l=og.filter(function(o){return duzey(o.sinif)===d&&(o.ad+" "+o.sinif).toLocaleLowerCase("tr").indexOf(q)>-1});
+    if(!l.length)return;say+=l.length;h+='<h3>'+d+' ('+l.length+')</h3>';
+    l.forEach(function(o){h+='<button class="stu" data-i="'+og.indexOf(o)+'">'+esc(o.ad)+' ('+esc(o.sinif)+') <span class="meta">· '+o.sinavlar.length+' sınav</span></button>'});
+  });
+  $("liste").innerHTML=h||'<p class="meta">Öğrenci bulunamadı.</p>';
+  [].forEach.call($("liste").querySelectorAll(".stu"),function(b){b.onclick=function(){secili=og[+b.dataset.i];profil()}});
+}
+function ogrenciEkle(){
+  app.innerHTML='<div class="card"><h1>Yeni öğrenci</h1><label for="n">Ad soyad</label><input id="n"><label for="dz">Düzey</label><select id="dz"><option>Ortaokul</option><option selected>Lise</option></select>'+
+  '<label for="c">Sınıf</label><select id="c"></select><label for="b">Şube</label><input id="b" maxlength="3" placeholder="Örn. A"><p class="note" id="hata" style="color:var(--red)"></p><div style="height:12px"></div><button id="k">Kaydet</button><button class="ghost" id="g">Vazgeç</button></div>';
+  function sinifDoldur(){var lise=$("dz").value==="Lise",s="";for(var i=lise?9:5;i<=(lise?12:8);i++)s+='<option value="'+i+'">'+i+'. sınıf</option>';$("c").innerHTML=s}
+  sinifDoldur();$("dz").onchange=sinifDoldur;$("g").onclick=anaSayfa;
+  $("k").onclick=function(){
+    var n=$("n").value.trim(),b=$("b").value.trim().toUpperCase();
+    if(!n||!b){$("hata").textContent="Ad soyad ve şube boş bırakılamaz.";return}
+    og.push({ad:n,sinif:$("c").value+"-"+b,sinavlar:[]});sakla();anaSayfa();
+  };
+}
+function profil(){
+  var o=secili,h='<button class="ghost" id="geri">‹ Ana sayfa</button><h1>'+esc(o.ad.toUpperCase())+'</h1><p class="sub">'+duzey(o.sinif)+' · Sınıf: '+esc(o.sinif)+'</p><div style="height:12px"></div><button id="sinav">Sınav ekle +</button><div class="card"><h2>Sınavlar (yeniden eskiye)</h2>';
+  if(!o.sinavlar.length)h+='<p class="meta">Henüz sınav yok.</p>';
+  o.sinavlar.slice().sort(function(a,b){return b.ts-a.ts}).forEach(function(s){
+    h+='<div class="exam"><div class="top"><b>'+esc(s.konu)+'</b><span class="puan" title="Öğretmen notu">'+(s.not==null?"–":s.not)+'</span></div><div class="meta">'+esc(s.tarih)+' · '+s.sure+' sn / '+(s.plan||"?")+' sn</div>';
+    h+='<div class="meta"><b>Önerilen puan: '+(s.puan==null?"–":s.puan)+'</b> (kesin değil, not öğretmene ait)</div>';if(s.puan!=null)h+='<div class="meta">Süre doluluğu %'+s.doluluk+' · Dolgu sesi: '+s.dolgu+' kez (−'+s.dolguSn+' sn) · Anahtar kelime: '+s.bul.length+'/'+(s.bul.length+s.eks.length)+(s.eks.length?' · Eksik: '+esc(s.eks.join(", ")):'')+'</div>';
+    h+='<label>Öğretmen notu (0-100)<input type="number" min="0" max="100" data-nid="'+s.id+'" value="'+(s.not==null?"":s.not)+'"></label><p>'+(s.metin?esc(s.metin):'<span class="meta">Metin yok.</span>')+'</p><audio controls data-id="'+s.id+'"></audio></div>';
+  });
+  app.innerHTML=h+'</div>';
+  $("geri").onclick=anaSayfa;$("sinav").onclick=sinavSayfasi;[].forEach.call(app.querySelectorAll("input[data-nid]"),function(i){i.onchange=function(){var s=secili.sinavlar.filter(function(e){return e.id===i.dataset.nid})[0],v=parseFloat(i.value);s.not=isNaN(v)?null:Math.max(0,Math.min(100,v));sakla();i.closest(".exam").querySelector(".puan").textContent=s.not==null?"–":s.not}});
+  [].forEach.call(app.querySelectorAll("audio[data-id]"),function(a){dbGet(a.dataset.id).then(function(b){if(b)a.src=URL.createObjectURL(b);else a.outerHTML='<div class="meta">Ses dosyası bulunamadı.</div>'})});
+}
+function sinavSayfasi(){
+  var o=secili,ak="";try{ak=localStorage.getItem(ANH)||""}catch(e){}
+  app.innerHTML='<h1>'+esc(o.ad.toUpperCase())+'</h1><p class="sub">'+duzey(o.sinif)+' · Sınıf: '+esc(o.sinif)+'</p>'+
+  '<div class="card"><h2>Konuşma metni (canlı)</h2><textarea id="metin" placeholder="Başlat’a basınca konuştukların burada yazılır."></textarea><p class="meta" style="margin:8px 0 2px">Ses dalgası (kırmızı = dolgu sesi) · Dolgu: <b id="dolgu">0</b></p><canvas id="dalga"></canvas></div>'+
+  '<div class="row"><div><label for="sure">Süre (dk:sn)</label><input id="sure" value="02:00" inputmode="numeric"><label for="konu">Konu</label><input id="konu" value="Tanzimat Edebiyatı"></div><button id="bas" style="min-height:96px;font-size:1.2rem">Başlat</button></div>'+
+  '<label for="anh">Anahtar kelimeler (virgülle ayır)</label><input id="anh" value="'+esc(ak)+'" placeholder="Örn. Şinasi, Namık Kemal, tiyatro">'+
+  '<p class="note" id="durum">Mikrofon izni için tarayıcı soracak.</p>'+
+  '<label for="dosya">Mikrofon açılmıyorsa: telefonla kaydet ve yükle</label><input id="dosya" type="file" accept="audio/*" capture>'+
+  '<div style="text-align:center;margin-top:8px"><button class="ghost" id="iptal">İptal / geri</button></div>';
+  $("bas").onclick=function(){kayit?bitir():baslat()};
+  $("iptal").onclick=function(){durdur();profil()};
+  $("dosya").onchange=function(){if(this.files[0])dosyaAnaliz(this.files[0])};
+}
+function ayar(){
+  var s=$("sure").value.trim().split(":"),plan=120;
+  if(s.length==2&&!isNaN(s[0])&&!isNaN(s[1])&&(+s[0])*60+(+s[1])>0)plan=(+s[0])*60+(+s[1]);
+  var anh=$("anh").value.split(",").map(function(k){return k.trim().toLocaleLowerCase("tr")}).filter(Boolean);
+  try{localStorage.setItem(ANH,$("anh").value)}catch(e){}
+  return{plan:plan,anahtar:anh,konu:$("konu").value.trim()||"Konu girilmedi"};
+}
+
+/* ---- kayıt ---- */
+async function baslat(){
+  var d=$("durum"),stream;
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){d.textContent="Bu tarayıcı mikrofon erişimini desteklemiyor. Aşağıdan kayıt yükleyebilirsin.";return}
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:true})}
+  catch(e){d.innerHTML="Mikrofona izin verilmedi. Claude içinde açılan sayfalarda bu engel ayarlardan kaldırılamaz. Çözüm: sayfayı kendi adresine yükle (Netlify Drop) ya da aşağıdan kayıt yükle.";return}
+  var a=ayar();
+  kayit={stream:stream,parcalar:[],kalan:a.plan,a:a,metin:"",bitti:false,ded:new Ded()};
+  try{kayit.mr=new MediaRecorder(stream);kayit.mr.ondataavailable=function(e){if(e.data.size)kayit.parcalar.push(e.data)};kayit.mr.start()}
+  catch(e){d.textContent="Ses kaydı başlatılamadı: "+e.message;stream.getTracks().forEach(function(t){t.stop()});kayit=null;return}
+  var AC=window.AudioContext||window.webkitAudioContext;
+  kayit.ac=new AC();kayit.an=kayit.ac.createAnalyser();kayit.an.fftSize=2048;kayit.ac.createMediaStreamSource(stream).connect(kayit.an);
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(SR){
+    var r=new SR();r.lang="tr-TR";r.continuous=true;r.interimResults=true;kayit.sr=r;kayit.metin=$("metin").value;
+    r.onresult=function(e){var k="",g="";for(var i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)k+=e.results[i][0].transcript+" ";else g+=e.results[i][0].transcript}kayit.metin+=k;$("metin").value=kayit.metin+g;$("metin").scrollTop=1e5};
+    r.onerror=function(e){if(e.error!=="no-speech"&&e.error!=="aborted")$("durum").textContent="Yazıya dökme hatası ("+e.error+"). Ses kaydı sürüyor."};
+    r.onend=function(){if(kayit&&!kayit.bitti){try{r.start()}catch(e){}}};
+    try{r.start()}catch(e){}
+    d.innerHTML='<span class="rec"></span>Kayıt sürüyor.';
+  }else d.innerHTML='<span class="rec"></span>Kayıt sürüyor. Bu tarayıcıda yazıya dökme yok, anahtar kelime puanı çıkmaz.';
+  var b=$("bas");b.textContent="Bitir";b.className="stop";b.style.cssText="min-height:96px;font-size:1.2rem";
+  kayit.zaman=setInterval(function(){kayit.kalan--;var k=Math.max(kayit.kalan,0);$("sure").value=String(Math.floor(k/60)).padStart(2,"0")+":"+String(k%60).padStart(2,"0");if(kayit.kalan<=0)bitir()},1000);
+  kayit.son=performance.now();ciz();
+}
+function ciz(){
+  var k=kayit;if(!k||k.bitti)return;
+  var c=$("dalga");if(!c)return;
+  var w=c.clientWidth,h=c.clientHeight,dpr=window.devicePixelRatio||1;
+  if(c.width!==Math.round(w*dpr)){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr)}
+  var x=new Float32Array(2048);k.an.getFloatTimeDomainData(x);
+  var m=ozellik(x,k.ac.sampleRate),now=performance.now(),dt=Math.min((now-k.son)/1000,0.1);k.son=now;
+  k.ded.push(m[0],m[1],dt);$("dolgu").textContent=k.ded.n;
+  var g=c.getContext("2d");g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  var cs=getComputedStyle(document.documentElement),yesil=cs.getPropertyValue("--green").trim(),kirmizi=cs.getPropertyValue("--red").trim();(k.gec=k.gec||[]).push([m[0],k.ded.d>=0.6]);var nb=Math.floor(w/4);if(k.gec.length>nb)k.gec.shift();
+  for(var i=0;i<k.gec.length;i++){var a=Math.min(k.gec[i][0]*6,1)*h/2;g.fillStyle=k.gec[i][1]?kirmizi:yesil;g.fillRect(i*4,h/2-a-1,3,a*2+2)}
+  requestAnimationFrame(ciz);
+}
+function durdur(){
+  if(!kayit)return Promise.resolve(null);
+  var k=kayit;k.bitti=true;clearInterval(k.zaman);k.ded.bitir();
+  try{k.sr&&k.sr.stop()}catch(e){}try{k.ac&&k.ac.close()}catch(e){}
+  kayit=null;
+  return new Promise(function(res){
+    if(k.mr&&k.mr.state!=="inactive"){k.mr.onstop=function(){res(new Blob(k.parcalar,{type:k.mr.mimeType||"audio/webm"}))};k.mr.stop()}else res(null);
+  }).then(function(b){k.stream.getTracks().forEach(function(t){t.stop()});k.blob=b;return k});
+}
+async function bitir(){
+  var k0=kayit;if(!k0)return;
+  var metin=$("metin").value.trim(),gecen=Math.max(k0.a.plan-Math.max(k0.kalan,0),0);
+  var k=await durdur();
+  kaydet(k.blob,metin,gecen,k.a,k.ded);
+}
+async function dosyaAnaliz(f){
+  var d=$("durum");d.textContent="Kayıt analiz ediliyor…";
+  try{
+    var a=ayar(),AC=window.AudioContext||window.webkitAudioContext,ac=new AC();
+    var b=await ac.decodeAudioData(await f.arrayBuffer()),x=b.getChannelData(0),dt=1024/b.sampleRate,ded=new Ded();
+    for(var i=0;i+2048<=x.length;i+=1024){var m=ozellik(x.subarray(i,i+2048),b.sampleRate);ded.push(m[0],m[1],dt)}
+    ded.bitir();ac.close();
+    kaydet(f,$("metin").value.trim(),Math.round(b.duration),a,ded);
+  }catch(e){d.textContent="Kayıt çözülemedi: "+e.message}
+}
+function kaydet(blob,metin,gecen,a,ded){
+  var id="s"+Date.now(),r=puanla({metin:metin,gecen:gecen,plan:a.plan,dolguSn:ded.sn,dolguSayi:ded.n,anahtar:a.anahtar});
+  if(blob&&blob.size)dbPut(id,blob);
+  secili.sinavlar.push({id:id,ts:Date.now(),konu:a.konu,sure:gecen,plan:a.plan,metin:metin,tarih:new Date().toLocaleString("tr-TR"),dolgu:ded.n,dolguSn:Math.round(ded.sn),puan:r.puan,doluluk:r.doluluk,bul:r.bul,eks:r.eks});
+  sakla();profil();
+}
+window.addEventListener("pagehide",function(){durdur()});
+giris();
+</script>
+</body>
+</html>
